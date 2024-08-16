@@ -50,15 +50,15 @@ class ROHCCompressor:
 
     def _compress_ir(self, ip_header: bytes, payload: bytes) -> bytes:
         # IR packet format: [1 1 1 1 1 1 0 1] [Profile ID] [CID] [Static chain] [Dynamic chain] [Payload]
-        packet_type = 0xFD  # 11111101 in binary
+        packet_type = 0xFD  # 11111101 in binary (use dto identify that it's an IR packet)
         compressed = struct.pack('!BB', packet_type, self.profile.value)
         compressed += struct.pack('!B', 0)  # CID (assuming 0 for simplicity)
         
-        # Static chain (for IPv4)
+        # Static chain (for IPv4), only interested in the version field, which is the first byte. The rest of the fields are ignored (denoted by _).
         version, _, _, _, _, _, _, _ = struct.unpack('!BBHHHBBH', ip_header[:12])
         compressed += struct.pack('!B', version)
         
-        # Dynamic chain
+        # Dynamic chain (includes parts of the header that might change frequently between packets, needs to be synchronized with the decompressor.)
         _, _, total_length, id, _, ttl, protocol, _, src_ip, dst_ip = struct.unpack('!BBHHHBBHII', ip_header)
         compressed += struct.pack('!HHHBBII', total_length, id, 0, ttl, protocol, src_ip, dst_ip)
         
@@ -145,13 +145,6 @@ class ROHCCompressor:
 
 
 
-# Usage example
-# compressor = ROHCCompressor(ROHCProfile.RTP)
-# decompressor = ROHCDecompressor(ROHCProfile.RTP)
-
-# # Simulate compression and decompression
-# original_header = b'\x45\x00\x00\x3c\x1c\x46\x40\x00\x40\x11\x3c\x8f\xc0\xa8\x00\x01\xc0\xa8\x00\xc7'
-# compressed_header = compressor.compress(original_header)
-# decompressed_header = decompressor.decompress(compressed_header)
-
-# assert original_header == decompressed_header, "Compression/Decompression failed"
+# compressor = ROHCCompressor(ROHCProfile.IP, ROHCMode.UNIDIRECTIONAL)
+# original_packet = b'\x45\x00\x00\x3c\x1c\x46\x40\x00\x40\x11\x3c\x8f\xc0\xa8\x00\x01\xc0\xa8\x00\xc7' + b'\x00' * 20  # IP header + dummy payload
+# compressed_packet = compressor.compress(original_packet)
