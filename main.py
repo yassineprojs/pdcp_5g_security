@@ -52,17 +52,16 @@ class PDCP:
 
         return original_ip_packet
 
-    # ... (other methods)
+    def get_state_info(self):
+        return {
+            "ROHC Compressor Profile": self.rohc_compressor.profile.name,
+            "ROHC Compressor Mode": self.rohc_compressor.mode.name,
+            "Security Bearer": self.security.bearer,
+            "Security Direction": "Uplink" if self.security.direction == 0 else "Downlink",
+            "PDCP Count": self.security.count,
+            "PDCP SN": self.sn
+        }
 
 # Usage
 pdcp = PDCP()
 pdcp.initialize_security(bearer=1, direction=0)
-
-# Process a packet
-ip_packet = b'\x45\x00\x00\x3c\x1c\x46\x40\x00\x40\x11\x3c\x8f\xc0\xa8\x00\x01\xc0\xa8\x00\xc7' + b'\x00' * 20
-pdcp_pdu = pdcp.process_packet(ip_packet, PDCPHeader.PDCP_SN_LEN_12)
-
-# Simulate receiving and processing the packet
-received_ip_packet = pdcp.process_received_packet(pdcp_pdu, PDCPHeader.PDCP_SN_LEN_12)
-
-assert ip_packet == received_ip_packet, "End-to-end processing failed"

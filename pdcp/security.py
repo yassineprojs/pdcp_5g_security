@@ -26,22 +26,24 @@ class PDCPSecurity:
     def increment_count(self):
         self.count = (self.count + 1) & 0xFFFFFFFF  # Ensure it's a 32-bit value
 
-    def encrypt(self, plaintext):
-        if self.encryption_key is None:
-            raise ValueError("Encryption key not set. Call generate_key() first.")
-
-        # Construct the PDCP Count (32 bits) as per 3GPP TS 33.501
+    def _get_iv(self):
+        # Construct the initialization vector (IV)
         pdcp_count = self.count
-
-        # Construct the bearer (5 bits) and direction (1 bit) as per 3GPP TS 33.501
         bearer = self.bearer & 0x1F  # 5 bits for bearer
         direction = self.direction & 0x01  # 1 bit for direction
 
-        # Construct the initialization vector (IV)
         iv = pdcp_count.to_bytes(4, byteorder='big') + \
              bearer.to_bytes(1, byteorder='big') + \
              direction.to_bytes(1, byteorder='big') + \
-             b'\x00\x00'  # Padding to make it 64 bits
+             b'\x00\x00\x00\x00\x00\x00'  # Padding to make it 128 bits (16 bytes)
+
+        return iv
+    
+    def encrypt(self, plaintext):
+        if self.encryption_key is None:
+            raise ValueError("Encryption key not set. Call generate_keys() first.")
+
+        iv = self._get_iv()
 
         # Create an AES-CTR cipher instance
         cipher = Cipher(algorithms.AES(self.encryption_key), modes.CTR(iv), backend=default_backend())
@@ -54,20 +56,9 @@ class PDCPSecurity:
 
     def decrypt(self, ciphertext):
         if self.encryption_key is None:
-            raise ValueError("Decryption key not set. Call generate_key() first.")
+            raise ValueError("Decryption key not set. Call generate_keys() first.")
 
-        # Construct the PDCP Count (32 bits) as per 3GPP TS 33.501
-        pdcp_count = self.count
-
-        # Construct the bearer (5 bits) and direction (1 bit) as per 3GPP TS 33.501
-        bearer = self.bearer & 0x1F  # 5 bits for bearer
-        direction = self.direction & 0x01  # 1 bit for direction
-
-        # Construct the initialization vector (IV)
-        iv = pdcp_count.to_bytes(4, byteorder='big') + \
-             bearer.to_bytes(1, byteorder='big') + \
-             direction.to_bytes(1, byteorder='big') + \
-             b'\x00\x00'  # Padding to make it 64 bits
+        iv = self._get_iv()
 
         # Create an AES-CTR cipher instance
         cipher = Cipher(algorithms.AES(self.encryption_key), modes.CTR(iv), backend=default_backend())

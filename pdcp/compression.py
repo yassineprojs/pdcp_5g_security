@@ -9,12 +9,12 @@ class ROHCProfile(enum.Enum):
     ESP = 3
     IP = 4
 
-class ROHCPacketType(enum.Enum):
-    IR = 0
-    IR_DYN = 1
-    UO_0 = 2
-    UO_1 = 3
-    UO_2 = 4
+# class ROHCPacketType(enum.Enum):
+#     IR = 0
+#     IR_DYN = 1
+#     UO_0 = 2
+#     UO_1 = 3
+#     UO_2 = 4
 
 class ROHCMode(enum.Enum):
     UNIDIRECTIONAL = 0
@@ -125,6 +125,106 @@ class ROHCCompressor:
             'dst_ip': dst_ip
         })
 
+    def decompress(self, compressed_packet: bytes) -> bytes:
+        packet_type = compressed_packet[0]
+        
+        if packet_type == ROHCProfile.UNCOMPRESSED.value:
+            return self._decompress_uncompressed(compressed_packet)
+        elif packet_type & 0xFD == 0xFD:  # IR packet
+            return self._decompress_ir(compressed_packet)
+        elif packet_type & 0xF8 == 0xF8:  # IR-DYN packet
+            return self._decompress_ir_dyn(compressed_packet)
+        else:
+            return self._decompress_uo(compressed_packet)
+
+    def _decompress_uncompressed(self, compressed_packet: bytes) -> bytes:
+        return compressed_packet[1:]  # Remove the profile identifier
+
+    def _decompress_ir(self, compressed_packet: bytes) -> bytes:
+        _, profile, cid = struct.unpack('!BBB', compressed_packet[:3])
+        static_chain_start = 3
+        
+        # Decode static chain
+        version = compressed_packet[static_chain_start]
+        dynamic_chain_start = static_chain_start + 1
+        
+        # Decode dynamic chain
+        total_length, id, _, ttl, protocol, src_ip, dst_ip = struct.unpack('!HHHBBII', compressed_packet[dynamic_chain_start:dynamic_chain_start+16])
+        
+        # Reconstruct IP header
+        ip_header = struct.pack('!BBHHHBBHII', version << 4 | 5, 0, total_length, id, 0, ttl, protocol, 0, src_ip, dst_ip)
+        
+        # Update context
+        self._update_context(ip_header)
+        
+        # Return reconstructed packet
+        return ip_header + compressed_packet[dynamic_chain_start+16:]
+
+    def _decompress_ir_dyn(self, compressed_packet: bytes) -> bytes:
+        _, profile, cid = struct.unpack('!BBB', compressed_packet[:3])
+        dynamic_chain_start = 3
+        
+        # Decode dynamic chain
+        total_length, id, ttl = struct.unpack('!HHB', compressed_packet[dynamic_chain_start:dynamic_chain_start+5])
+        
+        # Reconstruct IP header using context and new dynamic values
+        ip_header = struct.pack('!BBHHHBBHII', 
+                                self.context['version'] << 4 | 5, 
+                                0, 
+                                total_length, 
+                                id, 
+                                0, 
+                                ttl, 
+                                self.context['protocol'], 
+                                0, 
+                                self.context['src_ip'], 
+                                self.context['dst_ip'])
+        
+        # Update context
+        self._update_context(ip_header)
+        
+        # Return reconstructed packet
+        return ip_header + compressed_packet[dynamic_chain_start+5:]
+
+    def _decompress_uo(self, compressed_packet: bytes) -> bytes:
+        if compressed_packet[0] & 0x80 == 0:  # UO-0
+            sn = compressed_packet[0] & 0x7F
+            payload_start = 1
+            id = (self.context['last_id'] + 1) & 0xFFFF
+            ttl = self.context['last_ttl']
+        elif compressed_packet[0] & 0xC0 == 0x80:  # UO-1
+            sn = compressed_packet[0] & 0x3F
+            ip_id_delta, = struct.unpack('!H', compressed_packet[1:3])
+            id = (self.context['last_id'] + ip_id_delta) & 0xFFFF
+            ttl = self.context['last_ttl']
+            payload_start = 3
+        else:  # UO-2
+            sn = compressed_packet[0] & 0x3F
+            ip_id_delta, ttl = struct.unpack('!HH', compressed_packet[1:5])
+            id = (self.context['last_id'] + ip_id_delta) & 0xFFFF
+            payload_start = 5
+
+        # Reconstruct IP header
+        ip_header = struct.pack('!BBHHHBBHII', 
+                                self.context['version'] << 4 | 5, 
+                                0, 
+                                self.context['last_length'], 
+                                id, 
+                                0, 
+                                ttl, 
+                                self.context['protocol'], 
+                                0, 
+                                self.context['src_ip'], 
+                                self.context['dst_ip'])
+
+        # Update context and sequence number
+        self._update_context(ip_header)
+        self.sn = (sn + 1) & 0xFFFF
+
+        # Return reconstructed packet
+        return ip_header + compressed_packet[payload_start:]
+
+
     def feedback(self, feedback: bytes):
         # Handle any feedback from the decompressor
         # This is used in bidirectional modes
@@ -144,7 +244,3 @@ class ROHCCompressor:
 
 
 
-
-# compressor = ROHCCompressor(ROHCProfile.IP, ROHCMode.UNIDIRECTIONAL)
-# original_packet = b'\x45\x00\x00\x3c\x1c\x46\x40\x00\x40\x11\x3c\x8f\xc0\xa8\x00\x01\xc0\xa8\x00\xc7' + b'\x00' * 20  # IP header + dummy payload
-# compressed_packet = compressor.compress(original_packet)
