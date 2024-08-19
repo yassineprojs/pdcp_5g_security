@@ -18,7 +18,7 @@ class ROHCProfile(enum.Enum):
 
 class ROHCMode(enum.Enum):
     UNIDIRECTIONAL = 0
-    BIDIRECTIONAl_optimistic = 1
+    BIDIRECTIONAL_OPTIMISTIC = 1
     BIDERCTIONAL_RELIABLE =2
 
 

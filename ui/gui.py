@@ -2,13 +2,18 @@
 
 import tkinter as tk
 from tkinter import ttk, scrolledtext
-from main import pdcp
+from main import PDCP
+from pdcp.compression import ROHCProfile, ROHCMode
+
 
 class PDCPGUI:
     def __init__(self, master):
         self.master = master
         master.title("5G PDCP Simulator")
-        master.geometry("800x600")
+        master.geometry("800x500")
+
+        self.pdcp = PDCP()
+        self.pdcp.initialize_security(bearer=1, direction=0)
 
         self.create_widgets()
 
@@ -26,6 +31,24 @@ class PDCPGUI:
         self.sn_length_var = tk.StringVar(value="12")
         ttk.Radiobutton(input_frame, text="12", variable=self.sn_length_var, value="12").pack(side=tk.LEFT)
         ttk.Radiobutton(input_frame, text="18", variable=self.sn_length_var, value="18").pack(side=tk.LEFT)
+
+         # ROHC options frame
+        rohc_frame = ttk.LabelFrame(self.master, text="ROHC Options")
+        rohc_frame.pack(padx=10, pady=10, fill=tk.X)
+
+        ttk.Label(rohc_frame, text="Profile:").pack(side=tk.LEFT, padx=5)
+        self.profile_var = tk.StringVar(value="IP")
+        profile_combo = ttk.Combobox(rohc_frame, textvariable=self.profile_var, values=["UNCOMPRESSED", "RTP", "UDP", "ESP", "IP"])
+        profile_combo.pack(side=tk.LEFT, padx=5)
+        profile_combo.bind("<<ComboboxSelected>>", self.update_rohc_options)
+
+        ttk.Label(rohc_frame, text="Mode:").pack(side=tk.LEFT, padx=5)
+        self.mode_var = tk.StringVar(value="UNIDIRECTIONAL")
+        mode_combo = ttk.Combobox(rohc_frame, textvariable=self.mode_var, values=["UNIDIRECTIONAL", "BIDIRECTIONAL_OPTIMISTIC", "BIDIRECTIONAL_RELIABLE"])
+        mode_combo.pack(side=tk.LEFT, padx=5)
+        mode_combo.bind("<<ComboboxSelected>>", self.update_rohc_options)
+
+        ttk.Button(self.master, text="Reset ROHC Context", command=self.reset_rohc_context).pack(pady=10)
 
         # Process button
         ttk.Button(self.master, text="Process Packet", command=self.process_packet).pack(pady=10)
@@ -46,13 +69,24 @@ class PDCPGUI:
 
         self.update_state_info()
 
+    def update_rohc_options(self, event=None):
+        profile = getattr(ROHCProfile, self.profile_var.get())
+        mode = getattr(ROHCMode, self.mode_var.get())
+        self.pdcp.set_rohc_profile(profile, mode)
+        self.update_state_info()
+
+    def reset_rohc_context(self):
+        self.pdcp.reset_rohc_context()
+        self.update_state_info()
+        self.output_text.insert(tk.END, "ROHC context has been reset.\n")
+
     def process_packet(self):
         try:
             ip_packet = bytes.fromhex(self.ip_packet_entry.get())
             sn_length = int(self.sn_length_var.get())
 
-            pdcp_pdu = pdcp.process_packet(ip_packet, sn_length)
-            received_ip_packet = pdcp.process_received_packet(pdcp_pdu, sn_length)
+            pdcp_pdu = self.pdcp.process_packet(ip_packet, sn_length)
+            received_ip_packet = self.pdcp.process_received_packet(pdcp_pdu, sn_length)
 
             self.output_text.delete(1.0, tk.END)
             self.output_text.insert(tk.END, f"Original IP Packet: {ip_packet.hex()}\n\n")
@@ -71,7 +105,7 @@ class PDCPGUI:
             self.output_text.insert(tk.END, f"Error: {str(e)}")
 
     def update_state_info(self):
-        state_info = pdcp.get_state_info()
+        state_info = self.pdcp.get_state_info()
         self.state_text.delete(1.0, tk.END)
         for key, value in state_info.items():
             self.state_text.insert(tk.END, f"{key}: {value}\n")
