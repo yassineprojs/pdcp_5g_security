@@ -22,46 +22,38 @@ class PDCP:
 
     def process_packet(self, ip_packet: bytes, sn_length: int) -> bytes:
         try:
-            # Compress the IP header
             compressed_packet = self.rohc_compressor.compress(ip_packet)
-
-            # Protect (encrypt and generate MAC) the compressed packet
-            protected_packet, mac = self.security.protect(compressed_packet)
-
-            # Create PDCP header
+            protected_packet = self.security.protect(compressed_packet)
             pdcp_header = self.pdcp_header.create_data_pdu_header(self.sn, sn_length)
-
-            # Increment sequence number
             self.sn = (self.sn + 1) % (2**sn_length)
-
-            # Combine PDCP header, protected packet, and MAC
-            pdcp_pdu = pdcp_header + protected_packet + mac
-
+            pdcp_pdu = pdcp_header + protected_packet
             return pdcp_pdu
         except Exception as e:
-            print(f"Error processing packet: {e}")
-            return b''
+            print(f"Error processing packet: {str(e)}")
+            raise
+  
+
 
     def process_received_packet(self, pdcp_pdu: bytes, sn_length: int) -> bytes:
         try:
-            # Parse PDCP header
             header_info = self.pdcp_header.parse_header(pdcp_pdu[:3])
             
-            # Extract protected packet and MAC
+            if header_info['pdu_type'] != 'Data':
+                raise ValueError("Received PDU is not a Data PDU")
+            
+            if header_info['sn_length'] != sn_length:
+                raise ValueError(f"Received SN length ({header_info['sn_length']}) does not match expected SN length ({sn_length})")
+            
             header_length = 2 if sn_length == 12 else 3
-            protected_packet = pdcp_pdu[header_length:-4]
-            received_mac = pdcp_pdu[-4:]
-
-            # Unprotect (verify MAC and decrypt) the packet
-            unprotected_packet = self.security.unprotect(protected_packet, received_mac)
-
-            # Decompress the packet
+            protected_packet = pdcp_pdu[header_length:]
+            
+            unprotected_packet = self.security.unprotect(protected_packet)
             original_ip_packet = self.rohc_compressor.decompress(unprotected_packet)
-
+            
             return original_ip_packet
         except Exception as e:
-            print(f"Error processing received packet: {e}")
-            return b''
+            print(f"Error processing received packet: {str(e)}")
+            raise
         
     def reset_rohc_context(self):
         self.rohc_compressor.context_timeout()

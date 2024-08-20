@@ -27,16 +27,13 @@ class PDCPSecurity:
         self.count = (self.count + 1) & 0xFFFFFFFF  # Ensure it's a 32-bit value
 
     def _get_iv(self):
-        # Construct the initialization vector (IV)
         pdcp_count = self.count
         bearer = self.bearer & 0x1F  # 5 bits for bearer
         direction = self.direction & 0x01  # 1 bit for direction
-
         iv = pdcp_count.to_bytes(4, byteorder='big') + \
-             bearer.to_bytes(1, byteorder='big') + \
-             direction.to_bytes(1, byteorder='big') + \
-             b'\x00\x00\x00\x00\x00\x00'  # Padding to make it 128 bits (16 bytes)
-
+            bearer.to_bytes(1, byteorder='big') + \
+            direction.to_bytes(1, byteorder='big') + \
+            b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'  # Padding to make it 128 bits (16 bytes)
         return iv
     
     def encrypt(self, plaintext):
@@ -84,7 +81,7 @@ class PDCPSecurity:
         h.update(mac_input)
 
         # Generate MAC
-        mac = h.finalize()[:4]  # Use first 32 bits of MAC
+        mac = h.finalize()[:16]  # Use first 16 bits of MAC
 
         return mac
 
@@ -93,26 +90,25 @@ class PDCPSecurity:
         return calculated_mac == received_mac
 
     def protect(self, plaintext):
-        # Encrypt the plaintext
-        ciphertext = self.encrypt(plaintext)
-
-        # Generate MAC for the ciphertext
+        iv = self._get_iv()
+        cipher = Cipher(algorithms.AES(self.encryption_key), modes.CTR(iv), backend=default_backend())
+        encryptor = cipher.encryptor()
+        ciphertext = encryptor.update(plaintext) + encryptor.finalize()
         mac = self.generate_mac(ciphertext)
-
-        # Increment count after successful operation
         self.increment_count()
+        return ciphertext + mac  # Combine ciphertext and MAC
 
-        return ciphertext, mac
-
-    def unprotect(self, ciphertext, received_mac):
-        # Verify MAC
-        if not self.verify_mac(ciphertext, received_mac):
-            raise ValueError("MAC verification failed. Message may have been tampered with.")
-
-        # Decrypt the ciphertext
-        plaintext = self.decrypt(ciphertext)
-
-        # Increment count after successful operation
+    def unprotect(self, protected_packet):
+        ciphertext = protected_packet[:-16]  # Assuming 16-byte MAC
+        received_mac = protected_packet[-16:]
+        calculated_mac = self.generate_mac(ciphertext)
+        if calculated_mac != received_mac:
+            raise ValueError("MAC verification failed")
+        iv = self._get_iv()
+        cipher = Cipher(algorithms.AES(self.encryption_key), modes.CTR(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+        plaintext = decryptor.update(ciphertext) + decryptor.finalize()
         self.increment_count()
-
         return plaintext
+    
+    

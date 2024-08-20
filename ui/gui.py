@@ -4,13 +4,14 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext
 from main import PDCP
 from pdcp.compression import ROHCProfile, ROHCMode
+import traceback
 
 
 class PDCPGUI:
     def __init__(self, master):
         self.master = master
         master.title("5G PDCP Simulator")
-        master.geometry("800x500")
+        master.geometry("800x730")
 
         self.pdcp = PDCP()
         self.pdcp.initialize_security(bearer=1, direction=0)
@@ -37,7 +38,7 @@ class PDCPGUI:
         rohc_frame.pack(padx=10, pady=10, fill=tk.X)
 
         ttk.Label(rohc_frame, text="Profile:").pack(side=tk.LEFT, padx=5)
-        self.profile_var = tk.StringVar(value="IP")
+        self.profile_var = tk.StringVar(value="UNCOMPRESSED")
         profile_combo = ttk.Combobox(rohc_frame, textvariable=self.profile_var, values=["UNCOMPRESSED", "RTP", "UDP", "ESP", "IP"])
         profile_combo.pack(side=tk.LEFT, padx=5)
         profile_combo.bind("<<ComboboxSelected>>", self.update_rohc_options)
