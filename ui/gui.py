@@ -1,5 +1,3 @@
-# gui.py
-
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 from main import PDCP
@@ -85,6 +83,15 @@ class PDCPGUI:
         try:
             ip_packet = bytes.fromhex(self.ip_packet_entry.get())
             sn_length = int(self.sn_length_var.get())
+            profile = getattr(ROHCProfile, self.profile_var.get())
+            mode = getattr(ROHCMode, self.mode_var.get())
+
+            print(f"Processing packet with SN length: {sn_length}, Profile: {profile}, Mode: {mode}")
+            print(f"Original IP Packet: {ip_packet.hex()}")
+
+            # Reset PDCP state
+            self.pdcp = PDCP(profile, mode)
+            self.pdcp.initialize_security(bearer=1, direction=0)
 
             pdcp_pdu = self.pdcp.process_packet(ip_packet, sn_length)
             received_ip_packet = self.pdcp.process_received_packet(pdcp_pdu, sn_length)
@@ -100,10 +107,10 @@ class PDCPGUI:
                 self.output_text.insert(tk.END, "Error: End-to-end processing failed.")
 
             self.update_state_info()
-
         except Exception as e:
             self.output_text.delete(1.0, tk.END)
             self.output_text.insert(tk.END, f"Error: {str(e)}")
+        print("Packet processing completed")
 
     def update_state_info(self):
         state_info = self.pdcp.get_state_info()
