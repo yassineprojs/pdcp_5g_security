@@ -47,19 +47,12 @@ class PDCPHeader:
         return bytes([header])
 
     def parse_header(self, header_bytes):
-        """
-        Parse a PDCP header.
-        
-        :param header_bytes: Bytes object containing the header
-        :return: Dictionary with header information
-        """
-        
         first_byte = header_bytes[0]
         dc_bit = (first_byte >> 7) & 0x01
         if dc_bit == self.DC_BIT_DATA:
             sn_length = 12 if len(header_bytes) == 2 else 18
             if sn_length == 12:
-                sn = ((first_byte & 0x7F) << 5) | ((header_bytes[1] & 0xF8) >> 3)
+                sn = ((first_byte & 0x0F) << 8) | header_bytes[1]
             else:  # 18-bit SN
                 sn = ((first_byte & 0x7F) << 11) | (header_bytes[1] << 3) | ((header_bytes[2] & 0xE0) >> 5)
             return {
@@ -67,12 +60,11 @@ class PDCPHeader:
                 'sn_length': sn_length,
                 'sn': sn
             }
-        else:  # Control PDU
+        else:  
             pdu_type = first_byte & 0x7F
             control_pdu_types = {
                 0x00: 'STATUS_REPORT',
                 0x01: 'ROHC_FEEDBACK',
-                # Add more control PDU types as needed
             }
             return {
                 'pdu_type': 'Control',

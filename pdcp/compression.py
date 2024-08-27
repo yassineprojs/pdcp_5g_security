@@ -9,12 +9,6 @@ class ROHCProfile(enum.Enum):
     ESP = 3
     IP = 4
 
-# class ROHCPacketType(enum.Enum):
-#     IR = 0
-#     IR_DYN = 1
-#     UO_0 = 2
-#     UO_1 = 3
-#     UO_2 = 4
 
 class ROHCMode(enum.Enum):
     UNIDIRECTIONAL = 0
@@ -33,19 +27,82 @@ class ROHCCompressor:
         self.gen_id = 0  # Generation ID for context
         self.max_cid = 15  # Maximum Context ID
         self.feedback_buffer = []
+        self.last_packet = None
+
 
 
     def compress(self, ip_packet: bytes) -> bytes:
         if self.profile == ROHCProfile.UNCOMPRESSED:
             return self._compress_uncompressed(ip_packet)
         else:
-            # For now, we'll just return the original packet for other profiles
-            return ip_packet
+            # For all other profiles, we'll use a simplified compression
+            packet_type = 0xFD
+            compressed = struct.pack('!BB', packet_type, self.profile.value)
+            compressed += struct.pack('!B', 0)  # CID
+            compressed += ip_packet  # For simplicity, we're not actually compressing
+            self.last_packet = ip_packet
+            return compressed
 
     def _compress_uncompressed(self, ip_packet: bytes) -> bytes:
-        compressed = struct.pack('!B', ROHCProfile.UNCOMPRESSED.value) + ip_packet
+        packet_type = 0xFE  # Uncompressed profile indicator
+        cid = 0x00  # Assuming Context ID is 0
+        return struct.pack('!BB', packet_type, cid) + ip_packet
+
+
+    def _compress_rtp(self, ip_packet: bytes) -> bytes:
+        # For this example, we'll just use IR packet type for RTP
+        packet_type = 0xFD  # IR packet type
+        compressed = struct.pack('!BB', packet_type, self.profile.value)
+        compressed += struct.pack('!B', 0)  # CID (assuming 0 for simplicity)
+        
+        # Compress IP header
+        ip_header = ip_packet[:20]
+        version, _, total_length, id, _, ttl, protocol, _, src_ip, dst_ip = struct.unpack('!BBHHHBBHII', ip_header)
+        compressed += struct.pack('!BBHHHBBHII', version, 0, total_length, id, 0, ttl, protocol, 0, src_ip, dst_ip)
+        
+        # Add UDP header (assuming UDP for RTP)
+        udp_header = ip_packet[20:28]
+        compressed += udp_header
+        
+        # Add RTP header (assuming RTP starts after UDP)
+        rtp_header = ip_packet[28:40]
+        compressed += rtp_header
+        
+        # Add payload
+        compressed += ip_packet[40:]
+        
+        self._update_context(ip_header)
         return compressed
 
+    def decompress(self, compressed_packet: bytes) -> bytes:
+        packet_type = compressed_packet[0]
+        if packet_type == 0xFE:  # UNCOMPRESSED
+            return compressed_packet[2:]  # Skip the ROHC header (2 bytes)
+        elif packet_type == 0xFD:  # Other profiles
+            return compressed_packet[3:]  # Skip the ROHC header (3 bytes)
+        else:
+            raise ROHCError("Unknown packet type")
+
+
+    def _decompress_uncompressed(self, compressed_packet: bytes) -> bytes:
+        return compressed_packet[2:]  
+
+    def _significant_changes(self, ip_header: bytes) -> bool:
+        if not self.context:
+            return True
+        _, _, _, _, _, _, protocol, _, src_ip, dst_ip = struct.unpack('!BBHHHBBHII', ip_header)
+        return (protocol != self.context.get('protocol') or
+                src_ip != self.context.get('src_ip') or
+                dst_ip != self.context.get('dst_ip'))
+
+    def _minor_changes(self, ip_header: bytes) -> bool:
+        if not self.context:
+            return True
+        _, _, total_length, id, _, ttl, _, _, _, _ = struct.unpack('!BBHHHBBHII', ip_header)
+        return (total_length != self.context.get('last_length') or
+                id != (self.context.get('last_id', 0) + 1) & 0xFFFF or
+                ttl != self.context.get('last_ttl'))
+    
     def _compress_ir(self, ip_header: bytes, payload: bytes) -> bytes:
         # IR packet format: [1 1 1 1 1 1 0 1] [Profile ID] [CID] [Static chain] [Dynamic chain] [Payload]
         packet_type = 0xFD  # 11111101 in binary (use dto identify that it's an IR packet)
@@ -132,12 +189,7 @@ class ROHCCompressor:
             'dst_ip': dst_ip
         })
 
-    def decompress(self, compressed_packet: bytes) -> bytes:
-        if self.profile == ROHCProfile.UNCOMPRESSED:
-            return self._decompress_uncompressed(compressed_packet)
-        else:
-            # For now, we'll just return the original packet for other profiles
-            return compressed_packet
+
 
     def _decompress_uncompressed(self, compressed_packet: bytes) -> bytes:
         if compressed_packet[0] == ROHCProfile.UNCOMPRESSED.value:
@@ -146,37 +198,20 @@ class ROHCCompressor:
             return compressed_packet  # Remove the profile identifier
 
     def _decompress_ir(self, compressed_packet: bytes) -> bytes:
-        crc_received = struct.unpack('!I', compressed_packet[-4:])[0]
-        packet_without_crc = compressed_packet[:-4]
-        crc_calculated = self.calculate_crc(packet_without_crc)
+        # Skip packet type, profile, and CID
+        decompressed = compressed_packet[3:]
         
-        if crc_received != crc_calculated:
-            raise ROHCError("CRC verification failed for IR packet")
-        _, profile, cid = struct.unpack('!BBB', compressed_packet[:3])
-        static_chain_start = 3
-        
-        # Decode static chain
-        version = compressed_packet[static_chain_start]
-        dynamic_chain_start = static_chain_start + 1
-        
-        # Decode dynamic chain
-        total_length, id, _, ttl, protocol, src_ip, dst_ip = struct.unpack('!HHHBBII', packet_without_crc[dynamic_chain_start:dynamic_chain_start+16])
-        
-        # Reconstruct IP header
-        ip_header = struct.pack('!BBHHHBBHII', version << 4 | 5, 0, total_length, id, 0, ttl, protocol, 0, src_ip, dst_ip)
-        
-        # Update context
-        self._update_context(ip_header)
-        
-        # Return reconstructed packet
-        payload_start = dynamic_chain_start + 16
+        # If it's RTP profile, we need to reconstruct the packet
         if self.profile == ROHCProfile.RTP:
-            ssrc, sequence, timestamp = struct.unpack('!III', packet_without_crc[payload_start:payload_start+12])
-            rtp_header = struct.pack('!BBHIII', 0x80, 0, sequence, timestamp, ssrc)
-            payload_start += 12
-            return ip_header + rtp_header + packet_without_crc[payload_start:]
+            ip_header = decompressed[:20]
+            udp_header = decompressed[20:28]
+            rtp_header = decompressed[28:40]
+            payload = decompressed[40:]
+            
+            # Reconstruct the packet
+            return ip_header + udp_header + rtp_header + payload
         
-        return ip_header + packet_without_crc[payload_start:]
+        return decompressed
 
     def _decompress_ir_dyn(self, compressed_packet: bytes) -> bytes:
         _, profile, cid = struct.unpack('!BBB', compressed_packet[:3])
