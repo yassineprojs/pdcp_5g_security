@@ -309,6 +309,3 @@ class ROHCCompressor:
     @staticmethod
     def calculate_crc(data: bytes) -> int:
         return zlib.crc32(data) & 0xFFFFFFFF
-
-
-

@@ -1,6 +1,8 @@
 from pdcp.header import PDCPHeader
 from pdcp.compression import ROHCCompressor,ROHCProfile, ROHCMode
 from pdcp.security import PDCPSecurity
+from database import PDUDatabase
+
 # from pdcp.sdu_handling import SDUHandler
 # from pdcp.control_pdu import ControlPDU
 # from pdcp.state_management import PDCPState
@@ -13,6 +15,8 @@ class PDCP:
         self.security = PDCPSecurity()
         self.sn = 0  # PDCP sequence number
         self.reset_security_counts()
+        self.db = PDUDatabase()
+
 
     def reset_security_counts(self):
         self.security.tx_count = 0
@@ -36,10 +40,15 @@ class PDCP:
             print(f"Protected packet: {protected_packet.hex()}")
             pdcp_header = self.pdcp_header.create_data_pdu_header(self.sn, sn_length)
             print(f"PDCP Header: {pdcp_header.hex()}")
-            self.sn = (self.sn + 1) % (2**sn_length)
             pdcp_pdu = pdcp_header + protected_packet
+            
+            # Store the PDU in the database
+            self.db.insert_pdu('TX', self.sn, 'Data', pdcp_pdu, ip_packet)
+            
+            self.sn = (self.sn + 1) % (2**sn_length)
             print(f"PDCP PDU: {pdcp_pdu.hex()}")
             return pdcp_pdu
+            
         except Exception as e:
             print(f"Error processing packet: {str(e)}")
             raise
@@ -64,6 +73,9 @@ class PDCP:
             original_ip_packet = self.rohc_compressor.decompress(unprotected_packet)
             print(f"Original IP packet: {original_ip_packet.hex()}")
             
+            # Store the received PDU in the database
+            self.db.insert_pdu('RX', header_info['sn'], header_info['pdu_type'], pdcp_pdu, original_ip_packet)
+            
             return original_ip_packet
         except Exception as e:
             print(f"Error processing received packet: {str(e)}")
@@ -81,3 +93,6 @@ class PDCP:
             "PDCP Count": self.security.count,
             "PDCP SN": self.sn
         }
+    
+    def close(self):
+        self.db.close()
